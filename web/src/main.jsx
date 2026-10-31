@@ -1,0 +1,138 @@
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Home, ClipboardList, CalendarDays, UserRound, Plus, Camera, ChevronRight, ChevronLeft, Search, Clock3, Bell, Sparkles, X, Check, ImagePlus, ArrowLeft, ChartNoAxesCombined } from 'lucide-react';
+import './style.css';
+
+const TYPES = ['未选择','只画头发','头发＋修图','修图（身材 / 滤镜）','其他'];
+const DEFAULT_REMINDERS = {noon:{enabled:true,time:'12:00'},evening:{enabled:true,time:'18:00'}};
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const dateOf = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y,m-1,d,12); };
+const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const offset = (s,n) => { const d=dateOf(s); d.setDate(d.getDate()+n); return iso(d); };
+const newOrder = minutes => ({id:0, customer:'',wechat:'',detail:'',quantity:1,due:'',price:'',done:false,type:'只画头发',minutesPerImage:minutes});
+const total = o => (Number(o.quantity)||0)*(Number(o.minutesPerImage)||0);
+const DAILY_CAPACITY=480;
+const hours = minutes => (minutes/60).toFixed(1).replace(/\.0$/, '');
+const completedDay = o => (o.completedAt||'').slice(0,10);
+const loadOn = (orders,date) => orders.reduce((sum,o)=>sum+((o.done?completedDay(o):o.due)===date?total(o):0),0);
+const weekday = s => ['周日','周一','周二','周三','周四','周五','周六'][dateOf(s).getDay()];
+const short = s => s ? `${Number(s.slice(5,7))}月${Number(s.slice(8,10))}日 ${weekday(s)}` : '日期未定';
+const duePriority = s => !s?'':s<today()?'已逾期':s===today()?'今天':s===offset(today(),1)?'明天':s===offset(today(),2)?'后天':'';
+const formatCompleted = s => s ? `${short(s.slice(0,10))} ${s.slice(11,16)}` : '未记录';
+const normalizeTime = s => { const m=/^(\d{1,2}):(\d{1,2})$/.exec(s||'');if(!m)return null;const h=Number(m[1]),n=Number(m[2]);return h<24&&n<60?`${String(h).padStart(2,'0')}:${String(n).padStart(2,'0')}`:null; };
+const greetingFor = date => {
+ const hour=date.getHours();
+ if(hour>=5&&hour<11)return {period:'早上好',message:'新的一天也要慢慢来，亲亲'};
+ if(hour>=11&&hour<14)return {period:'中午好',message:'记得吃饭和休息呀，亲亲'};
+ if(hour>=14&&hour<18)return {period:'下午好',message:'画累了就歇一会儿，亲亲'};
+ if(hour>=18&&hour<23)return {period:'晚上好',message:'你辛苦啦，亲亲'};
+ return {period:'深夜好',message:'辛苦啦，早点休息，亲亲'};
+};
+const native = window.HuaxuNative;
+
+function App() {
+ const [orders,setOrders]=useState([]), [defaultMinutes,setDefaultMinutes]=useState(30), [reminders,setReminders]=useState(DEFAULT_REMINDERS), [reminderDraft,setReminderDraft]=useState(DEFAULT_REMINDERS), [page,setPage]=useState('home'), [selected,setSelected]=useState(today());
+ const [sheet,setSheet]=useState(null),[draft,setDraft]=useState(null),[raw,setRaw]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[toast,setToast]=useState(''),[datePickerTarget,setDatePickerTarget]=useState(''),[timePickerSlot,setTimePickerSlot]=useState(''),[timeDraft,setTimeDraft]=useState('12:00');
+ const [filter,setFilter]=useState('全部'),[query,setQuery]=useState(''),[setting,setSetting]=useState('30');
+ const [now,setNow]=useState(()=>new Date());
+ const [statsMode,setStatsMode]=useState('all'),[statsRange,setStatsRange]=useState({start:`${today().slice(0,7)}-01`,end:today()});
+ const defaultRef=useRef(30), sheetRef=useRef(null), pageRef=useRef('home'); defaultRef.current=defaultMinutes; sheetRef.current=sheet; pageRef.current=page;
+ useEffect(()=>{
+  const listen=(name,fn)=>{ window.addEventListener(name,fn); return ()=>window.removeEventListener(name,fn); };
+  const cleanup=[
+   listen('huaxu-state',e=>{setOrders(e.detail.orders||[]);setDefaultMinutes(e.detail.defaultMinutes||30);setReminders(e.detail.reminders||DEFAULT_REMINDERS)}),
+   listen('huaxu-ocr-start',()=>{setDraft(newOrder(defaultRef.current));setRaw('');setError('');setBusy(true);setSheet({kind:'edit'})}),
+   listen('huaxu-ocr',e=>{setRaw(e.detail.raw||'');setDraft({...newOrder(defaultRef.current), ...Object.fromEntries(['customer','wechat','due','quantity','price'].map(k=>[k,e.detail[k]]))});setBusy(false)}),
+   listen('huaxu-ocr-error',e=>{setBusy(false);setError(e.detail.message||'识别失败，请手动填写')}),
+   listen('huaxu-error',e=>setError(e.detail.message||'操作失败')),
+   listen('huaxu-saved',()=>{setSheet(null);setError('');setToast('订单已保存')}),
+   listen('huaxu-setting-saved',()=>{setSheet(null);setError('');setToast('默认工时已更新')}),
+   listen('huaxu-reminder-saved',()=>{setSheet(null);setError('');setToast('提醒设置已保存')}),
+   listen('huaxu-back',()=>{ if(sheetRef.current) {setSheet(null);setError('')} else if(pageRef.current!=='home') setPage('home'); else native?.closeApp() })
+  ]; native?.refresh();return ()=>cleanup.forEach(fn=>fn());
+ },[]);
+ useEffect(()=>{if(!toast)return;const id=setTimeout(()=>setToast(''),2200);return()=>clearTimeout(id)},[toast]);
+ useEffect(()=>{const id=setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(id)},[]);
+ const pending=orders.filter(o=>!o.done), dayOrders=pending.filter(o=>o.due===selected), todayCompleted=orders.filter(o=>o.done&&completedDay(o)===today()).reduce((sum,o)=>sum+total(o),0), todayPending=pending.filter(o=>o.due===today()).reduce((sum,o)=>sum+total(o),0), todayLoad=todayCompleted+todayPending, selectedLoad=loadOn(orders,selected), weekStart=offset(selected,-((dateOf(selected).getDay()+6)%7)), weekLoad=Array.from({length:7},(_,i)=>loadOn(orders,offset(weekStart,i))).reduce((a,b)=>a+b,0), detail=sheet?.kind==='detail'?orders.find(o=>o.id===sheet.id):null;
+ const dueRank=o=>!o.due?5:o.due<today()?0:o.due===today()?1:o.due===offset(today(),1)?2:o.due===offset(today(),2)?3:4;
+ const sorted=[...pending].sort((a,b)=>dueRank(a)-dueRank(b)||a.due.localeCompare(b.due));
+ const filtered=orders.filter(o=> (filter==='全部'||filter==='待完成'&&!o.done||filter==='已完成'&&o.done||filter==='已逾期'&&!o.done&&o.due&&o.due<today()) && [o.customer,o.wechat,o.detail,o.type,String(o.id)].some(s=>(s||'').toLowerCase().includes(query.toLowerCase())));
+ const openEntry=()=>{setError('');setSheet({kind:'create'})};
+ const openNew=()=>{setDraft(newOrder(defaultMinutes));setRaw('');setError('');setSheet({kind:'edit'})};
+ const openEdit=o=>{setDraft({...o});setRaw('');setError('');setSheet({kind:'edit'})};
+ const change=(field,val)=>setDraft(d=>({...d,[field]:val}));
+ const openReminderSettings=()=>{setReminderDraft({noon:{...reminders.noon},evening:{...reminders.evening}});setError('');setSheet({kind:'reminders'})};
+ const updateReminder=(slot,field,value)=>setReminderDraft(r=>({...r,[slot]:{...r[slot],[field]:value}}));
+ const openTimePicker=slot=>{setTimeDraft(reminderDraft[slot].time||'12:00');setTimePickerSlot(slot)};
+ const confirmTime=()=>{updateReminder(timePickerSlot,'time',timeDraft);setTimePickerSlot('')};
+ const reminderSummary=[['noon',reminders.noon],['evening',reminders.evening]].filter(([,r])=>r?.enabled).map(([,r])=>normalizeTime(r.time)||r.time).join(' · ')||'已关闭';
+ const saveReminders=()=>{const normalized={noon:{...reminderDraft.noon,time:normalizeTime(reminderDraft.noon.time)},evening:{...reminderDraft.evening,time:normalizeTime(reminderDraft.evening.time)}};if(!normalized.noon.time||!normalized.evening.time){setError('请填写有效时间：小时 0–23，分钟 0–59。');return}native?.setReminderSettings(JSON.stringify(normalized))};
+ const save=e=>{e.preventDefault(); const n=Number(draft.quantity), m=Number(draft.minutesPerImage); if(!Number.isInteger(n)||n<1||n>9999||!Number.isInteger(m)||m<1||m>1440){setError('数量请输入 1–9999，工时请输入 1–1440 分钟。');return} if(draft.price&&!/^\d{1,9}(\.\d{1,2})?$/.test(draft.price)){setError('金额请输入有效数字，最多两位小数。');return} setError('');native?.saveOrder(JSON.stringify({...draft,quantity:n,minutesPerImage:m})); };
+ const updateDone=o=>native?.saveOrder(JSON.stringify({...o,done:!o.done}));
+ const matchingCustomerOrders=draft?.wechat?orders.filter(o=>o.id!==draft.id&&o.wechat&&o.wechat.trim().toLowerCase()===draft.wechat.trim().toLowerCase()):[];
+ const matchingCustomerNames=[...new Set(matchingCustomerOrders.map(o=>o.customer.trim()).filter(Boolean))];
+ const matchingPendingCount=matchingCustomerOrders.filter(o=>!o.done).length;
+ const sections={home:'首页',orders:'订单',calendar:'排期',mine:'我的'};
+ const greeting=greetingFor(now);
+ return <div className="app"><main className="viewport" key={page}>
+ {page==='home'&&<><header className="home-head"><div className="home-greeting"><h1>{greeting.period}，宝宝 <span>✳</span></h1><p>{greeting.message}</p></div><div className="date-pill"><CalendarDays size={15}/>{short(today())}</div></header>
+ <section className="hero"><div className="hero-label">今日创作进度</div><div className="hero-number">{hours(todayLoad)}<small>/ 8 小时</small></div><CapacityBar minutes={todayLoad}/><div className="hero-footer capacity-breakdown"><span>已完成 <b>{hours(todayCompleted)}h</b></span><span>待交付 <b>{hours(todayPending)}h</b></span><span>超出产能仍可接单</span></div><div className="hero-art"><i/><b/><em/></div></section>
+ <div className="metrics"><Metric label="待完成" value={pending.length}/><Metric label="已逾期" value={pending.filter(o=>o.due&&o.due<today()).length} danger/></div>
+ <Heading title="本周交付产能" action="打开排期" onClick={()=>setPage('calendar')}/><div className="week-summary"><strong>{hours(weekLoad)} <small>/ 56 小时</small></strong><span>{weekLoad>7*DAILY_CAPACITY?`超出 ${hours(weekLoad-7*DAILY_CAPACITY)} 小时 · 仍可接单`:'每个交付日按 8 小时估算'}</span></div><WeekStrip selected={selected} orders={orders} onSelect={setSelected}/><p className="sub">{short(selected)} · {dayOrders.length?`${dayOrders.length} 单，预计 ${hours(selectedLoad)} 小时`:'暂无计划交付'}</p>
+ <Heading title="优先处理" action="全部订单" onClick={()=>setPage('orders')}/><div className="list">{sorted.length?sorted.slice(0,3).map((o,i)=><OrderCard key={o.id} order={o} index={i} compact onClick={()=>setSheet({kind:'detail',id:o.id})}/>):<Empty text="当前没有待处理订单，开始记录新委托吧。"/>}</div></>}
+ {page==='orders'&&<><PageHead title="委托订单" sub="把每一个约定都记下来"/><div className="search"><Search size={18}/><input placeholder="搜索客户、微信号或需求" value={query} onChange={e=>setQuery(e.target.value)}/></div><div className="chips">{['全部','待完成','已逾期','已完成'].map(x=><button key={x} className={'chip '+(filter===x?'active':'')} onClick={()=>setFilter(x)}>{x}</button>)}</div><div className="list">{filtered.length?filtered.map((o,i)=><OrderCard key={o.id} order={o} index={i} onClick={()=>setSheet({kind:'detail',id:o.id})}/>):<Empty text="没有匹配的订单，试试其他关键词或新建委托。"/>}</div><p className="footer">共 {filtered.length} 条订单 · 点击查看详情</p></>}
+ {page==='calendar'&&<><PageHead title="创作排期" sub="把时间留给重要的画作"/><div className="calendar-tools"><strong>{dateOf(selected).getFullYear()}年 {dateOf(selected).getMonth()+1}月</strong><div><button onClick={()=>setSelected(offset(selected,-7))}><ChevronLeft size={17}/></button><button onClick={()=>setSelected(today())}>今天</button><button onClick={()=>setSelected(offset(selected,7))}><ChevronRight size={17}/></button></div></div><div className="week-summary"><strong>本周 {hours(weekLoad)} <small>/ 56 小时</small></strong><span>{weekLoad>7*DAILY_CAPACITY?`超出 ${hours(weekLoad-7*DAILY_CAPACITY)} 小时`:'每个交付日按 8 小时估算'}</span></div><WeekStrip selected={selected} orders={orders} onSelect={setSelected}/><div className="load"><strong>{short(selected)} · 计划交付产能</strong><div>{hours(selectedLoad)} <span>/ 8 小时</span></div><CapacityBar minutes={selectedLoad}/><p>{dayOrders.length} 单 · {dayOrders.reduce((n,o)=>n+o.quantity,0)} 张 · 超出产能仍可继续接单</p></div><Heading title="当天交付安排"/><div className="list">{dayOrders.length?dayOrders.map((o,i)=><OrderCard key={o.id} order={o} index={i} compact onClick={()=>setSheet({kind:'detail',id:o.id})}/>):<Empty text="这天暂无计划交付，给灵感留一点空间。"/>}</div></>}
+ {page==='mine'&&<><PageHead title="我的空间"/><div className="profile"><div className="avatar">画</div><strong>辛苦啦，起来放松下吧</strong><p>捏捏手腕，喝口水，再继续创作。</p></div><Dashboard orders={orders} mode={statsMode} setMode={setStatsMode} range={statsRange} onPickDate={setDatePickerTarget}/><div className="profile-metrics"><Metric label="已完成委托" value={orders.filter(o=>o.done).length}/><Metric label="全部订单" value={orders.length}/></div><Heading title="偏好与数据"/><div className="settings"><Setting icon={Clock3} title="默认每张工时" detail={`${defaultMinutes} 分钟`} onClick={()=>{setSetting(String(defaultMinutes));setError('');setSheet({kind:'setting'})}}/><Setting icon={Camera} title="截图识别" detail="从图片记录委托"/><Setting icon={Bell} title="当天交期提醒" detail={reminderSummary} onClick={openReminderSettings}/></div><Tip>订单只保存在这台设备。卸载或清除应用数据后，记录会丢失。</Tip></>}
+ <div className="bottom-space"/></main>
+ <nav className="nav">{Object.entries(sections).map(([key,label])=>{const Icon={home:Home,orders:ClipboardList,calendar:CalendarDays,mine:UserRound}[key];return <button key={key} className={page===key?'active':''} onClick={()=>setPage(key)}><Icon size={22}/><span>{label}</span></button>})}</nav>{page!=='mine'&&<button className="fab" onClick={openEntry}><Plus size={18}/>记一单</button>}
+ {sheet&&<div className="overlay" onClick={()=>!busy&&setSheet(null)}><section className="sheet" onClick={e=>e.stopPropagation()}><div className="handle"/><header className="sheet-head"><h2>{sheet.kind==='create'?'选择记录方式':sheet.kind==='reminders'?'当天交期提醒':sheet.kind==='edit'?(draft?.id?'编辑委托':'记下新委托'):sheet.kind==='setting'?'默认每张工时':'委托详情'}</h2><button className="close" disabled={busy} onClick={()=>setSheet(null)}><X size={18}/></button></header>
+ {sheet.kind==='create'&&<div className="sheet-body"><div className="sheet-scroll create-options"><button className="create-option" onClick={()=>{setSheet(null);native?.chooseImage()}}><span className="create-option-icon"><Camera size={20}/></span><span><strong>上传图片识别</strong><small>选择客户资料或聊天截图，自动提取信息</small></span><ChevronRight size={17}/></button><button className="create-option" onClick={openNew}><span className="create-option-icon"><Plus size={20}/></span><span><strong>手动记录</strong><small>直接填写客户、类别和交付日期</small></span><ChevronRight size={17}/></button></div></div>}
+ {sheet.kind==='edit'&&draft&&<form onSubmit={save} className="sheet-body"><div className="sheet-scroll">
+ {busy&&<div className="notice">正在本机识别图片…</div>}{raw&&<div className="ocr"><b>识别原文 · 请对照核实</b><pre>{raw}</pre><small>资料页备注日期按当前年份填写，微信号可能识别错误。</small></div>}
+ <Field label="客户称呼"><input value={draft.customer} disabled={busy} onChange={e=>change('customer',e.target.value)} placeholder="例如：微信昵称"/></Field><Field label="微信号"><input value={draft.wechat} disabled={busy} onChange={e=>change('wechat',e.target.value)} placeholder="选填，保存前请核对"/></Field>{matchingCustomerOrders.length>0&&<p className="warning">该微信号已有 {matchingCustomerOrders.length} 笔历史订单（待完成 {matchingPendingCount} 笔、已完成 {matchingCustomerOrders.length-matchingPendingCount} 笔）{matchingCustomerNames.length>0&&<>，关联称呼：{matchingCustomerNames.join('、')}</>}。请核对是否为同一位客户。</p>}
+ <Field label="单据类型"><div className="radio-group" role="radiogroup" aria-label="单据类型">{TYPES.map(x=><button type="button" key={x} role="radio" aria-checked={draft.type===x} disabled={busy} className={'radio-option '+(draft.type===x?'selected':'')} onClick={()=>change('type',x)}><span className="radio-indicator"/><span>{x}</span></button>)}</div></Field><Field label="需求 / 备注"><textarea value={draft.detail} disabled={busy} onChange={e=>change('detail',e.target.value)} placeholder="记录客户需求、修图说明……"/></Field>
+ <div className="grid"><Field label="数量（张）"><input type="text" inputMode="numeric" value={draft.quantity} disabled={busy} onChange={e=>change('quantity',e.target.value)}/></Field><Field label="每张工时（分钟）"><input type="text" inputMode="numeric" value={draft.minutesPerImage} disabled={busy} onChange={e=>change('minutesPerImage',e.target.value)}/></Field></div><p className="estimate">预计总工时 {total(draft)} 分钟 · {draft.quantity||0} 张 × {draft.minutesPerImage||0} 分钟</p>
+ <div className="grid"><Field label="约定交付日期"><button type="button" className="date-input" disabled={busy} onClick={()=>setDatePickerTarget('due')}><CalendarDays size={17}/><span className={draft.due?'':'placeholder'}>{draft.due?short(draft.due):'选择交付日期'}</span><ChevronRight size={16}/></button></Field><Field label="约定金额（元）"><input type="text" inputMode="decimal" value={draft.price} disabled={busy} onChange={e=>change('price',e.target.value)} placeholder="选填"/></Field></div><p className="fine">金额仅作记录，不代表已付款。原图和识别原文不会保存。</p>{error&&<p className="warning">{error}</p>}</div><div className="sheet-foot"><button type="button" className="outline" disabled={busy} onClick={()=>setSheet(null)}>取消</button><button className="primary" disabled={busy}>保存委托</button></div></form>}
+ {sheet.kind==='reminders'&&<div className="sheet-body"><div className="sheet-scroll reminder-editor"><p className="fine">为当天到期的委托设置两个提醒时段。两个时段可分别启用，并使用 24 小时制。</p>{[['noon','提醒时段一'],['evening','提醒时段二']].map(([slot,label])=><div className="reminder-card" key={slot}><div className="reminder-card-head"><div><strong>{label}</strong><small>当天到期委托提醒</small></div><button type="button" role="switch" aria-checked={reminderDraft[slot].enabled} className={'toggle '+(reminderDraft[slot].enabled?'on':'')} onClick={()=>updateReminder(slot,'enabled',!reminderDraft[slot].enabled)}><i/></button></div><button type="button" className="time-choice" onClick={()=>openTimePicker(slot)}><Clock3 size={18}/><strong>{normalizeTime(reminderDraft[slot].time)||'— — : — —'}</strong><span>修改时间</span><ChevronRight size={16}/></button></div>)}{error&&<p className="warning">{error}</p>}</div><div className="sheet-foot"><button className="outline" onClick={()=>setSheet(null)}>取消</button><button className="primary" onClick={saveReminders}>保存提醒</button></div></div>}
+ {sheet.kind==='setting'&&<div className="sheet-body"><div className="sheet-scroll"><Field label="每张工时（分钟）"><input type="text" inputMode="numeric" value={setting} onChange={e=>setSetting(e.target.value)}/></Field><p className="fine">新订单默认使用此值，历史订单保持原来的工时。</p>{error&&<p className="warning">{error}</p>}</div><div className="sheet-foot"><button className="outline" onClick={()=>setSheet(null)}>取消</button><button className="primary" onClick={()=>{let n=Number(setting);if(!Number.isInteger(n)||n<1||n>1440){setError('请输入 1 至 1440 的整数');return} native?.setDefaultMinutes(n)}}>保存</button></div></div>}
+ {detail&&<div className="sheet-body"><div className="sheet-scroll"><div className="detail-title"><Thumb index={detail.id}/><div><h3>{detail.detail||detail.type||'未填写需求'}</h3><p>{detail.customer||'未填写客户'} · {detail.type}</p></div></div><div className="detail-grid"><InfoCell title="交付日期" value={detail.due?short(detail.due):'未定'}/><InfoCell title="约定金额" value={detail.price?`¥${detail.price}`:'未填写'}/><InfoCell title="数量" value={`${detail.quantity} 张`}/><InfoCell title="预计工时" value={`${total(detail)} 分钟`}/>{detail.done&&<InfoCell title="完成时间" value={formatCompleted(detail.completedAt)}/>}</div><p className="fine">每张 {detail.minutesPerImage} 分钟 · 微信号：{detail.wechat||'未填写'}</p><div className="status">{detail.done?'已完成':'待完成'}</div><button className="outline wide" onClick={()=>updateDone(detail)}>{detail.done?'恢复待完成':'标记完成'}</button>{error&&<p className="warning">{error}</p>}</div><div className="sheet-foot"><button className="outline" onClick={()=>setSheet(null)}>关闭</button><button className="primary" onClick={()=>openEdit(detail)}>编辑委托</button></div></div>}
+ </section></div>}{datePickerTarget&&<DatePicker value={datePickerTarget==='due'?draft?.due:statsRange[datePickerTarget==='statsStart'?'start':'end']} title={datePickerTarget==='due'?'选择交付日期':'选择统计日期'} allowClear={datePickerTarget==='due'} onSelect={value=>{if(datePickerTarget==='due')change('due',value);else setStatsRange(range=>{const key=datePickerTarget==='statsStart'?'start':'end',next={...range,[key]:value};if(next.start&&next.end&&next.start>next.end)next[key==='start'?'end':'start']=value;return next});setDatePickerTarget('')}} onClose={()=>setDatePickerTarget('')}/>}{timePickerSlot&&<TimePicker value={timeDraft} onChange={setTimeDraft} onConfirm={confirmTime} onClose={()=>setTimePickerSlot('')}/>}{toast&&<div className="toast">{toast}</div>}</div>
+}
+function Dashboard({orders,mode,setMode,range,onPickDate}){
+ const start=mode==='month'?`${today().slice(0,7)}-01`:range.start,end=mode==='month'?today():range.end;
+ const valid=mode!=='custom'||start<=end;
+ const completed=orders.filter(o=>o.done&&(mode==='all'||valid&&completedDay(o)>=start&&completedDay(o)<=end));
+ const income=completed.reduce((sum,o)=>sum+(Number(o.price)||0),0);
+ const money=income.toLocaleString('zh-CN',{minimumFractionDigits:0,maximumFractionDigits:2});
+ return <section className="dashboard"><div className="dashboard-head"><div><h2>经营看板</h2><p>统计已完成的委托</p></div><span className="dashboard-icon"><ChartNoAxesCombined size={20}/></span></div><div className="range-tabs">{[['all','全部时间'],['month','本月'],['custom','自定义']].map(([key,label])=><button key={key} className={mode===key?'active':''} onClick={()=>setMode(key)}>{label}</button>)}</div>{mode==='custom'&&<div className="date-range"><button className="date-range-field" onClick={()=>onPickDate('statsStart')}><CalendarDays size={15}/>{range.start?short(range.start):'开始日期'}</button><span>至</span><button className="date-range-field" onClick={()=>onPickDate('statsEnd')}><CalendarDays size={15}/>{range.end?short(range.end):'结束日期'}</button></div>}<div className="dashboard-metrics"><div><small>{mode==='all'?'累计收入':'区间收入'}</small><strong>¥{money}</strong></div><div><small>{mode==='all'?'累计完成单数':'区间完成单数'}</small><strong>{completed.length}<em>单</em></strong></div></div><p className="dashboard-note">按完成时间统计；金额取已完成订单的约定金额，不代表实际到账。</p>{mode==='custom'&&!valid&&<p className="warning">开始日期不能晚于结束日期。</p>}</section>
+}
+function Metric({label,value,danger}){return <div className={'metric '+(danger?'danger':'')}><span>{label}</span><strong>{value}<small>单</small></strong></div>}
+function Heading({title,action,onClick}){return <div className="heading"><h2>{title}</h2>{action&&<button onClick={onClick}>{action}<ChevronRight size={14}/></button>}</div>}
+function PageHead({title,sub}){return <header className="page-head">{sub&&<p>{sub}</p>}<h1>{title}</h1></header>}
+function CapacityBar({minutes}){const ratio=minutes/DAILY_CAPACITY,tone=ratio>1?'over':ratio>=.7?'near':'ok';return <div className={'capacity-track '+tone}><i style={{width:`${Math.min(100,ratio*100)}%`}}/></div>}
+function WeekStrip({selected,orders,onSelect}){const d=dateOf(selected),start=offset(selected,-((d.getDay()+6)%7)),labels=['一','二','三','四','五','六','日'];return <div className="week">{labels.map((v,i)=>{const s=offset(start,i),minutes=loadOn(orders,s),tone=minutes>DAILY_CAPACITY?'over':minutes>=DAILY_CAPACITY*.7?'near':minutes?'ok':'empty';return <button key={s} onClick={()=>onSelect(s)} className={s===selected?'active':''}><span>{v}</span><strong>{dateOf(s).getDate()}</strong><i className={'heat '+tone}/></button>})}</div>}
+function Thumb({index}){return <div className={'thumb t'+(index%5)}><Sparkles size={22}/></div>}
+function OrderCard({order:o,index,compact,onClick}){return <button className={'order '+(compact?'compact':'')} onClick={onClick}><div className="order-top"><Thumb index={index}/><div className="order-info"><strong>{o.detail||(o.type==='未选择'?'未填写需求':o.type)}</strong><span>微信名：{o.customer||'未填写'}</span></div><div className="order-status"><em className="tag">{o.done?'已完成':'待完成'}</em><small>类别：{o.type||'未选择'}</small></div></div><div className="order-meta"><span><CalendarDays size={13}/>{duePriority(o.due)&&<em className="due-priority">{duePriority(o.due)}</em>}{short(o.due)} · {o.quantity} 张</span><span><Clock3 size={13}/>{total(o)} 分钟</span>{o.price&&<b>¥{o.price}</b>}</div></button>}
+function Empty({text}){return <div className="empty">{text}</div>}
+function Tip({children}){return <div className="tip"><Sparkles size={15}/><span>{children}</span></div>}
+function Setting({icon:Icon,title,detail,onClick}){return <button className="setting" onClick={onClick} disabled={!onClick}><Icon size={18}/><span>{title}</span><small>{detail}</small>{onClick&&<ChevronRight size={15}/>}</button>}
+function Field({label,children}){return <label className="field"><span>{label}</span>{children}</label>}
+function InfoCell({title,value}){return <div><small>{title}</small><strong>{value}</strong></div>}
+
+function DatePicker({value,onSelect,onClose,allowClear=false,title='选择日期'}){
+ const initial=value?dateOf(value):dateOf(today());
+ const [month,setMonth]=useState(new Date(initial.getFullYear(),initial.getMonth(),1));
+ const first=new Date(month.getFullYear(),month.getMonth(),1), start=new Date(month.getFullYear(),month.getMonth(),1-((first.getDay()+6)%7));
+ const days=Array.from({length:42},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d});
+ const changeMonth=amount=>setMonth(current=>new Date(current.getFullYear(),current.getMonth()+amount,1));
+ return <div className="overlay modal-overlay" onClick={onClose}><section className="picker-modal calendar-modal" role="dialog" aria-modal="true" aria-label={title} onClick={e=>e.stopPropagation()}><header className="picker-heading"><div><small>画序</small><h2>{title}</h2></div><button className="close" onClick={onClose}><X size={18}/></button></header><div className="month-nav"><button onClick={()=>changeMonth(-1)} aria-label="上个月"><ChevronLeft size={19}/></button><strong>{month.getFullYear()}年 {month.getMonth()+1}月</strong><button onClick={()=>changeMonth(1)} aria-label="下个月"><ChevronRight size={19}/></button></div><div className="calendar-grid calendar-weekdays">{'一二三四五六日'.split('').map((x,i)=><span key={i}>{x}</span>)}</div><div className="calendar-grid">{days.map(d=>{const key=iso(d), selected=key===value, inMonth=d.getMonth()===month.getMonth();return <button key={key} className={`${selected?'selected':''} ${inMonth?'':'outside'}`} onClick={()=>onSelect(key)}>{d.getDate()}</button>})}</div><footer className="picker-actions">{allowClear&&<button className="outline" onClick={()=>onSelect('')}>不设交期</button>}<button className="primary" onClick={()=>onSelect(today())}>今天</button></footer></section></div>
+}
+
+function TimePicker({value,onChange,onConfirm,onClose}){
+ const [hour,minute]=value.split(':').map(Number), hours=Array.from({length:24},(_,i)=>i), minutes=Array.from({length:60},(_,i)=>i);
+ const setPart=(part,n)=>onChange(`${String(part==='hour'?n:hour).padStart(2,'0')}:${String(part==='minute'?n:minute).padStart(2,'0')}`);
+ return <div className="overlay modal-overlay" onClick={onClose}><section className="picker-modal time-modal" role="dialog" aria-modal="true" aria-label="选择提醒时间" onClick={e=>e.stopPropagation()}><header className="picker-heading"><div><small>当天交期提醒</small><h2>选择提醒时间</h2></div><button className="close" onClick={onClose}><X size={18}/></button></header><div className="time-preview"><Clock3 size={20}/><strong>{String(hour).padStart(2,'0')}:{String(minute).padStart(2,'0')}</strong></div><div className="time-picker-columns"><section><h3>小时</h3><div className="time-picker-grid hour-grid">{hours.map(n=><button key={n} className={n===hour?'selected':''} onClick={()=>setPart('hour',n)}>{String(n).padStart(2,'0')}</button>)}</div></section><section><h3>分钟</h3><div className="time-picker-grid minute-grid">{minutes.map(n=><button key={n} className={n===minute?'selected':''} onClick={()=>setPart('minute',n)}>{String(n).padStart(2,'0')}</button>)}</div></section></div><footer className="picker-actions"><button className="outline" onClick={onClose}>取消</button><button className="primary" onClick={onConfirm}>确定</button></footer></section></div>
+}
+
+createRoot(document.getElementById('root')).render(<App/>);
+

@@ -1,0 +1,12 @@
+﻿.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+*.jks
+*.keystore
+
+web/node_modules/
+*.hprof
+/dist/
+/app/src/main/assets/web/

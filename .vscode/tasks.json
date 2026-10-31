@@ -1,0 +1,29 @@
+﻿{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Android: 构建 Debug APK",
+      "type": "shell",
+      "command": "${workspaceFolder}\\gradlew.bat",
+      "args": [":app:assembleDebug"],
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "Android: 安装 Debug APK",
+      "type": "shell",
+      "command": "${workspaceFolder}\\gradlew.bat",
+      "args": [":app:installDebug"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: 安装并启动 Demo",
+      "type": "process",
+      "command": "adb",
+      "args": ["shell", "am", "start", "-n", "com.engnotes.artistorders/.MainActivity"],
+      "dependsOn": "Android: 安装 Debug APK",
+      "problemMatcher": []
+    }
+  ]
+}
+
