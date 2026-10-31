@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Home, ClipboardList, CalendarDays, UserRound, Plus, Camera, ChevronRight, ChevronLeft, Search, Clock3, Bell, Sparkles, X, Check, ImagePlus, ArrowLeft, ChartNoAxesCombined } from 'lucide-react';
 import './style.css';
@@ -78,7 +78,7 @@ function App() {
  backHandlerRef.current=()=>{if(timePickerSlot){setTimePickerSlot('');return}if(datePickerTarget){setDatePickerTarget('');return}if(sheetRef.current){const previous=sheetBackRef.current;sheetBackRef.current=null;setSheet(previous||null);setError('');return}if(pageRef.current!=='home'){setPage('home');return}setToast('已经在首页了')};
  return <div className="app"><main className="viewport" key={page}>
  {page==='home'&&<><header className="home-head"><div className="home-greeting"><h1>{greeting.period}，宝宝 <span>✳</span></h1><p>{greeting.message}</p></div><div className="date-pill"><CalendarDays size={15}/>{short(today())}</div></header>
- <section className="hero"><div className="hero-label">今日创作进度</div><div className="hero-number">{hours(todayLoad)}<small>/ 8 小时</small></div><CapacityBar minutes={todayLoad}/><div className="hero-footer capacity-breakdown"><span>已完成 <b>{hours(todayCompleted)}h</b></span><span>待交付 <b>{hours(todayPending)}h</b></span><span>超出产能仍可接单</span></div><div className="hero-art"><i/><b/><em/></div></section>
+ <section className="hero"><div className="hero-label">今日创作进度</div><div className="hero-number">{hours(todayLoad)}<small>/ 8 小时</small></div><CapacityBar minutes={todayLoad}/><div className="hero-footer capacity-breakdown"><span>已完成 <b>{hours(todayCompleted)}h</b></span><span>待交付 <b>{hours(todayPending)}h</b></span></div><div className="hero-art"><i/><b/><em/></div></section>
  <div className="metrics"><Metric label="待完成" value={pending.length}/><Metric label="已逾期" value={pending.filter(o=>o.due&&o.due<today()).length} danger/></div>
  <Heading title="本周交付产能" action="打开排期" onClick={()=>setPage('calendar')}/><div className="week-summary"><strong>{hours(weekLoad)} <small>/ 56 小时</small></strong><span>{weekLoad>7*DAILY_CAPACITY?`超出 ${hours(weekLoad-7*DAILY_CAPACITY)} 小时 · 仍可接单`:'每个交付日按 8 小时估算'}</span></div><WeekStrip selected={selected} orders={orders} onSelect={setSelected}/><p className="sub">{short(selected)} · {dayOrders.length?`${dayOrders.length} 单，预计 ${hours(selectedLoad)} 小时`:'暂无计划交付'}</p>
  <Heading title="优先处理" action="全部订单" onClick={()=>setPage('orders')}/><div className="list">{sorted.length?sorted.slice(0,3).map((o,i)=><OrderCard key={o.id} order={o} index={i} compact onClick={()=>openDetail(o)}/>):<Empty text="当前没有待处理订单，开始记录新委托吧。"/>}</div></>}

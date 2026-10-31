@@ -178,16 +178,13 @@ class MainActivity : ComponentActivity() {
                     val image = InputImage.fromFilePath(applicationContext, uri)
                     recognizer.process(image).addOnSuccessListener { result ->
                         val raw = result.text
-                        val wx = Regex("(?m)^[ \\t|丨]*(?:微信号|微信號)[ \\t]*[:：][ \\t]*([a-zA-Z][a-zA-Z0-9_-]{2,})[ \\t]*$").find(raw)?.groupValues?.get(1).orEmpty()
-                        val nm = Regex("(?m)^[ \\t]*昵称[ \\t]*[:：][ \\t]*([^\\r\\n]+)").find(raw)
-                        val isProfile = nm != null && (raw.contains("微信号") || raw.contains("微信號"))
-                        val top = if (isProfile) raw.substring(0, nm!!.range.first) else ""
-                        // The date line may be followed by a WeChat icon that OCR reads as arbitrary text.
-                        val d = Regex("(?m)^[ \\t]*(\\d{1,2})[ \\t]*[.．/月-][ \\t]*(\\d{1,2})(?:日)?").find(top)
-                        val date = d?.let { runCatching { LocalDate.of(LocalDate.now().year, it.groupValues[1].toInt(), it.groupValues[2].toInt()).toString() }.getOrNull() }.orEmpty()
-                        val count = if (isProfile) 1 else Regex("(\\d{1,3})\\s*张").find(raw)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it > 0 } ?: 1
-                        val price = if (isProfile) "" else Regex("(?:¥|￥)\\s*(\\d+(?:\\.\\d{1,2})?)|(\\d+(?:\\.\\d{1,2})?)\\s*元").find(raw)?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }.orEmpty()
-                        emit("huaxu-ocr", JSONObject().put("raw", raw).put("customer", nm?.groupValues?.get(1)?.trim().orEmpty()).put("wechat", wx).put("due", date).put("quantity", count).put("price", price))
+                        val lines = result.textBlocks.flatMap { it.lines }.mapNotNull { line ->
+                            line.boundingBox?.let { OcrLine(line.text, it.top, it.left, it.height()) }
+                        }
+                        val profile = ProfileOcrParser.parse(lines)
+                        val count = if (profile.isProfile) 1 else Regex("(\\d{1,3})\\s*张").find(raw)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it > 0 } ?: 1
+                        val price = if (profile.isProfile) "" else Regex("(?:¥|￥)\\s*(\\d+(?:\\.\\d{1,2})?)|(\\d+(?:\\.\\d{1,2})?)\\s*元").find(raw)?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }.orEmpty()
+                        emit("huaxu-ocr", JSONObject().put("raw", raw).put("customer", profile.customer).put("wechat", profile.wechat).put("due", profile.due).put("quantity", count).put("price", price))
                     }.addOnFailureListener {
                         emit("huaxu-ocr-error", JSONObject().put("message", it.localizedMessage ?: "识别失败"))
                     }
